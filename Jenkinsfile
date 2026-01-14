@@ -39,9 +39,22 @@ pipeline {
       steps {
         sh '''
           set -euo pipefail
+
+          # Build the project
           mvn clean package -DskipTests
-          echo "Built artifacts:"
-          find . -name "launcher.war" -type f -print || echo "launcher.war not found"
+
+          echo "Locating built WAR(s):"
+          WAR_PATH="$(find . -name "*.war" -type f | head -n1 || true)"
+          if [ -z "${WAR_PATH}" ]; then
+            echo "ERROR: No WAR produced by the build. Check your pom.xml packaging and module path."
+            exit 1
+          fi
+          echo "Found WAR: ${WAR_PATH}"
+
+          # Ensure Docker build context has a 'target' dir with the WAR at a known path
+          mkdir -p target
+          cp -f "${WAR_PATH}" target/ROOT.war
+          ls -l target
         '''
       }
     }
@@ -51,9 +64,16 @@ pipeline {
         sh '''
           set -euo pipefail
 
-          # Login to ECR (non-interactive)
+          # Resolve docker command; fallback to sudo if socket permission is denied
+          DOCKER="docker"
+          if ! ${DOCKER} info >/dev/null 2>&1; then
+            echo "docker info failed; retrying with sudo docker"
+            DOCKER="sudo docker"
+          fi
+
+          echo "Logging into ECR registry: ${ECR_REGISTRY}"
           aws ecr get-login-password --region "${AWS_REGION}" \
-            | docker login --username AWS --password-stdin "${ECR_REGISTRY}"
+            | ${DOCKER} login --username AWS --password-stdin "${ECR_REGISTRY}"
 
           # Ensure repository exists (idempotent)
           aws ecr describe-repositories \
@@ -64,9 +84,9 @@ pipeline {
                  --region "${AWS_REGION}"
 
           # Build, tag, push
-          docker build -t "${ECR_REPO}:${IMAGE_TAG}" .
-          docker tag "${ECR_REPO}:${IMAGE_TAG}" "${ECR_URI}:${IMAGE_TAG}"
-          docker push "${ECR_URI}:${IMAGE_TAG}"
+          ${DOCKER} build -t "${ECR_REPO}:${IMAGE_TAG}" .
+          ${DOCKER} tag "${ECR_REPO}:${IMAGE_TAG}" "${ECR_URI}:${IMAGE_TAG}"
+          ${DOCKER} push "${ECR_URI}:${IMAGE_TAG}"
 
           # Optional: print image digest
           aws ecr describe-images \
@@ -91,6 +111,12 @@ pipeline {
             --query "services[0].taskDefinition" \
             --output text)
 
+          if [ -z "${TD_ARN}" ] || [ "${TD_ARN}" = "None" ]; then
+            echo "ERROR: Could not resolve current task definition ARN for service ${ECS_SERVICE}."
+            exit 1
+          fi
+          echo "Current task definition: ${TD_ARN}"
+
           # Fetch full task definition JSON
           aws ecs describe-task-definition \
             --task-definition "${TD_ARN}" \
@@ -98,13 +124,27 @@ pipeline {
             --query 'taskDefinition' \
             --output json > td.json
 
-          # Update image for target container; clean fields disallowed on register
-          jq '.containerDefinitions |=
-                map(if .name=="'"${CONTAINER_NAME}"'"
-                    then .image="'"${ECR_URI}:${IMAGE_TAG}"'"
-                    else . end)
-              | del(.revision,.status,.registeredAt,.compatibilities,.requiresAttributes,.taskDefinitionArn)' \
-            td.json > td-new.json
+          # Update image for the target container; remove fields not accepted by register-task-definition
+          jq '
+            (.containerDefinitions) |=
+              map(if .name=="'"${CONTAINER_NAME}"'"
+                  then .image="'"${ECR_URI}:${IMAGE_TAG}"'"
+                  else . end)
+            | del(
+                .revision,
+                .status,
+                .registeredAt,
+                .taskDefinitionArn,
+                .requiresAttributes,
+                .compatibilities,
+                .registeredBy
+              )
+          ' td.json > td-new.json
+
+          # Sanity check before register
+          test -s td-new.json || { echo "ERROR: td-new.json is empty."; exit 1; }
+          echo "Preview of td-new.json:"
+          jq . td-new.json | sed -n '1,120p'
 
           # Register new task definition
           NEW_TD_ARN=$(aws ecs register-task-definition \
@@ -113,6 +153,10 @@ pipeline {
             --query 'taskDefinition.taskDefinitionArn' \
             --output text)
 
+          if [ -z "${NEW_TD_ARN}" ] || [ "${NEW_TD_ARN}" = "None" ]; then
+            echo "ERROR: Failed to register new task definition."
+            exit 1
+          fi
           echo "Registered new task definition: ${NEW_TD_ARN}"
 
           # Update service to use new task definition
@@ -123,11 +167,13 @@ pipeline {
             --task-definition "${NEW_TD_ARN}" \
             --force-new-deployment
 
-          # Optional: wait until service is stable
+          # Wait until service is stable
           aws ecs wait services-stable \
             --cluster "${ECS_CLUSTER}" \
             --services "${ECS_SERVICE}" \
             --region "${AWS_REGION}"
+
+          echo "Deployment complete and service is stable."
         '''
       }
     }
