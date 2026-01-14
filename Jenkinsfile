@@ -53,7 +53,7 @@ pipeline {
 
           # Login to ECR (non-interactive)
           aws ecr get-login-password --region "${AWS_REGION}" \
-            | docker login --username AWS --password-stdin "${ECR_REGISTRY}"
+            | sudo docker login --username AWS --password-stdin "${ECR_REGISTRY}"
 
           # Ensure repository exists (idempotent)
           aws ecr describe-repositories \
@@ -64,9 +64,9 @@ pipeline {
                  --region "${AWS_REGION}"
 
           # Build, tag, push
-          docker build -t "${ECR_REPO}:${IMAGE_TAG}" .
-          docker tag "${ECR_REPO}:${IMAGE_TAG}" "${ECR_URI}:${IMAGE_TAG}"
-          docker push "${ECR_URI}:${IMAGE_TAG}"
+          sudo docker build -t "${ECR_REPO}:${IMAGE_TAG}" .
+          sudo docker tag "${ECR_REPO}:${IMAGE_TAG}" "${ECR_URI}:${IMAGE_TAG}"
+          sudo docker push "${ECR_URI}:${IMAGE_TAG}"
 
           # Optional: print image digest
           aws ecr describe-images \
