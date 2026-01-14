@@ -34,10 +34,12 @@ pipeline {
             steps {
                 sh '''
                 mvn clean package -DskipTests
-                ls -lh target
-                '''
-            }
+        dir('server') {
+            sh 'ls -lh target'
         }
+    }
+    }
+    }
 
         stage('Docker Build & Push') {
             steps {
