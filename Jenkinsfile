@@ -12,21 +12,25 @@ pipeline {
         CONTAINER_NAME = 'nginxfrontend'
     }
 
-    tools {
-        maven 'M3'        // Jenkins → Global Tool Config
-        jdk 'Java11'
-    }
-
     stages {
 
-        stage('Checkout Source') {
+        stage('Checkout') {
             steps {
                 git branch: 'main',
-                    url: 'hhttps://github.com/Amansh07/ecs-hmdm.git'
+                    url: 'https://github.com/Amansh07/ecs-hmdm.git'
             }
         }
 
-        stage('Build WAR using Maven') {
+        stage('Verify Java & Maven') {
+            steps {
+                sh '''
+                java -version
+                mvn -version
+                '''
+            }
+        }
+
+        stage('Build WAR') {
             steps {
                 sh '''
                 mvn clean package -DskipTests
@@ -35,7 +39,7 @@ pipeline {
             }
         }
 
-        stage('Docker Build & Push to ECR') {
+        stage('Docker Build & Push') {
             steps {
                 sh '''
                 aws ecr get-login-password --region ${AWS_REGION} \
@@ -48,7 +52,7 @@ pipeline {
             }
         }
 
-        stage('Update ECS Task Definition') {
+        stage('Deploy to ECS') {
             steps {
                 sh '''
                 TD_ARN=$(aws ecs describe-services \
@@ -83,14 +87,4 @@ pipeline {
             }
         }
     }
-
-    post {
-        success {
-            echo "✅ WAR deployed successfully to ECS"
-        }
-        failure {
-            echo "❌ Deployment failed"
-        }
-    }
 }
-
