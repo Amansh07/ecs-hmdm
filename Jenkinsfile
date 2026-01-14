@@ -2,13 +2,13 @@ pipeline {
     agent any
 
     environment {
-        AWS_REGION = 'us-east-1'
+        AWS_REGION     = 'us-east-1'
         AWS_ACCOUNT_ID = '206501439294'
-        ECR_REPO = 'ecstest'
-        IMAGE_TAG = "${BUILD_NUMBER}"
-        ECR_URI = "${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPO}"
-        ECS_CLUSTER = 'ecsdemotest'
-        ECS_SERVICE = 'frontendnginx-service'
+        ECR_REPO       = 'ecstest'
+        IMAGE_TAG      = "${BUILD_NUMBER}"
+        ECR_URI        = "206501439294.dkr.ecr.us-east-1.amazonaws.com/ecstest"
+        ECS_CLUSTER    = 'ecsdemotest'
+        ECS_SERVICE    = 'frontendnginx-service'
         CONTAINER_NAME = 'nginxfrontend'
     }
 
@@ -34,11 +34,10 @@ pipeline {
             steps {
                 sh '''
                 mvn clean package -DskipTests
-        dir('server') {
-            sh 'ls -lh target'
+                find . -name "*.war" -type f -print
+                '''
+            }
         }
-    }
-    }
 
         stage('Docker Build & Push') {
             steps {
