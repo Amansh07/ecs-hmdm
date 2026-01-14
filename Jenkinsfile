@@ -34,7 +34,7 @@ pipeline {
             steps {
                 sh '''
                 mvn clean package -DskipTests
-                find . -name "*.war" -type f -print
+                find . -name "launcher.war" -type f -print
                 '''
             }
         }
